@@ -290,35 +290,28 @@ def load_creds() -> Credentials:
     return creds
 
 
-def upload(rows, sheet_id: str):
-    if not rows:
-        print("업로드할 행 없음")
-        return 0, 0
+def fetch_existing_keys(sheet_id: str) -> set:
     creds = load_creds()
     service = build("sheets", "v4", credentials=creds, cache_discovery=False)
     resp = service.spreadsheets().values().get(
         spreadsheetId=sheet_id, range=f"{TAB_NAME}!C2:C",
     ).execute()
-    existing = {r[0] for r in resp.get("values", []) if r and r[0]}
+    return {r[0] for r in resp.get("values", []) if r and r[0]}
 
-    new_rows = []
-    skipped = 0
-    for row in rows:
-        key = row[2]
-        if key in existing:
-            skipped += 1
-            continue
-        new_rows.append(row)
 
-    if new_rows:
-        service.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range=f"{TAB_NAME}!A1",
-            valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
-            body={"values": new_rows},
-        ).execute()
-    return len(new_rows), skipped
+def upload(rows, sheet_id: str):
+    if not rows:
+        return 0
+    creds = load_creds()
+    service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    service.spreadsheets().values().append(
+        spreadsheetId=sheet_id,
+        range=f"{TAB_NAME}!A1",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": rows},
+    ).execute()
+    return len(rows)
 
 
 def estimate_cost(tok_in: int, tok_out: int) -> str:
@@ -355,9 +348,16 @@ def summarize_deadlines(rows, now):
 def main():
     sheet_id = os.environ["SHEET_ID"]
     triples, now = collect()
-    enriched_rows, stats = enrich_rows(triples)
-    added, skipped = upload(enriched_rows, sheet_id)
-    print(f"\n시트 업데이트: 신규 {added}건 / 중복 {skipped}건 스킵")
+
+    # 중복 제거를 LLM 호출 전에 수행 (비용 절감 핵심)
+    existing = fetch_existing_keys(sheet_id)
+    new_triples = [(r, u, f) for (r, u, f) in triples if r[2] not in existing]
+    skipped = len(triples) - len(new_triples)
+    print(f"\n중복 사전 제거: {skipped}건 스킵 → 신규 {len(new_triples)}건만 LLM 분석")
+
+    enriched_rows, stats = enrich_rows(new_triples)
+    added = upload(enriched_rows, sheet_id)
+    print(f"\n시트 업데이트: 신규 {added}건 추가")
     print(f"시트: https://docs.google.com/spreadsheets/d/{sheet_id}/edit")
     if stats["processed"]:
         print(f"\nLLM 분석: 성공 {stats['ok']} / 미지원(HWP) {stats['unsupported']} / 다운로드·파싱 실패 {stats['fail']} / 첨부없음 {stats['no_attach']}")
