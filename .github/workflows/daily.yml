@@ -1,0 +1,37 @@
+name: 나라장터 일일 모니터링
+
+on:
+  schedule:
+    # 매일 KST 09:03 = UTC 00:03
+    - cron: '3 0 * * *'
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: '며칠 전부터 수집 (기본 2)'
+        required: false
+        default: '2'
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          G2B_API_KEY: ${{ secrets.G2B_API_KEY }}
+          GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          DAYS_BACK: ${{ github.event.inputs.days_back || '2' }}
+          PYTHONUTF8: '1'
+        run: python fetch_and_upload.py
