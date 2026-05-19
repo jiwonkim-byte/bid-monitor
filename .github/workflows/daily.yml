@@ -14,7 +14,7 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +32,7 @@ jobs:
           G2B_API_KEY: ${{ secrets.G2B_API_KEY }}
           GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DAYS_BACK: ${{ github.event.inputs.days_back || '2' }}
           PYTHONUTF8: '1'
         run: python fetch_and_upload.py
