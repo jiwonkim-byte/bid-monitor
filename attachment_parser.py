@@ -3,14 +3,17 @@
 지원 형식:
   - .pdf  : pdfplumber
   - .hwpx : zipfile + ElementTree (Contents/section*.xml 의 텍스트 노드)
-  - .hwp  : 미지원 (LibreOffice 등 외부 도구 필요 — 빈 문자열 반환 + 사유 로그)
+  - .hwp  : pyhwp hwp5txt CLI (서브프로세스). HWP5 포맷만 지원, 매우 구버전 HWP는 실패할 수 있음.
 """
 from __future__ import annotations
 
 import io
 import re
+import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import Path
 
 import requests
 
@@ -43,6 +46,29 @@ def parse_pdf(content: bytes) -> str:
             if sum(len(p) for p in parts) > MAX_CHARS:
                 break
     return "\n".join(parts)
+
+
+def parse_hwp(content: bytes) -> str:
+    """HWP (구버전 바이너리) → pyhwp의 hwp5txt CLI로 텍스트 추출."""
+    with tempfile.NamedTemporaryFile(suffix=".hwp", delete=False) as tf:
+        tf.write(content)
+        tmp_path = tf.name
+    try:
+        result = subprocess.run(
+            ["hwp5txt", tmp_path],
+            capture_output=True, text=True, encoding="utf-8", errors="ignore",
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout[:MAX_CHARS]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+    finally:
+        try:
+            Path(tmp_path).unlink()
+        except OSError:
+            pass
 
 
 def parse_hwpx(content: bytes) -> str:
@@ -79,8 +105,6 @@ def extract_text(url: str, filename: str) -> tuple[str, str]:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ("pdf", "hwpx", "hwp"):
         return "", "unsupported"
-    if ext == "hwp":
-        return "", "unsupported"  # 구형 HWP - LibreOffice 필요, 일단 스킵
 
     content = download(url)
     if content is None:
@@ -89,8 +113,10 @@ def extract_text(url: str, filename: str) -> tuple[str, str]:
     try:
         if ext == "pdf":
             text = parse_pdf(content)
-        else:
+        elif ext == "hwpx":
             text = parse_hwpx(content)
+        else:  # hwp
+            text = parse_hwp(content)
         text = text[:MAX_CHARS]
         if len(text) < 100:
             return "", "fail"

@@ -3,3 +3,5 @@ google-auth>=2.0
 google-api-python-client>=2.0
 pdfplumber>=0.10
 anthropic>=0.40
+pyhwp==0.1b15
+six>=1.16
