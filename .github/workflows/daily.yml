@@ -2,8 +2,9 @@ name: 나라장터 일일 모니터링
 
 on:
   schedule:
-    # 매일 KST 09:03 = UTC 00:03
-    - cron: '3 0 * * *'
+    # 매일 KST 10:13 = UTC 01:13
+    # (UTC 00:00 근처는 GitHub Actions cron이 가장 혼잡해서 자주 지연/스킵됨)
+    - cron: '13 1 * * *'
   workflow_dispatch:
     inputs:
       days_back:
