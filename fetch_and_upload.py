@@ -263,12 +263,13 @@ def enrich_rows(triples):
         if out["summary"]:
             stats["ok"] += 1
             row[9] = out["summary"]  # 사업 주요 내용
-            # 참여제한: API에서 이미 값 있으면 유지, 없거나 LLM이 더 구체적이면 덮어씀
             if out["participation"]:
-                if out["participation_note"]:
-                    row[10] = f"{out['participation']} ({out['participation_note']})"
-                else:
-                    row[10] = out["participation"]
+                row[10] = out["participation"]  # 참여 가능 / 참여 불가
+                if out["participation"] == "참여 불가" and out["ineligible_reason"]:
+                    stats["ineligible"] = stats.get("ineligible", 0) + 1
+                    # 비고(15): PRE는 "사전규격" 앞에 두고, 사유 추가
+                    base = row[15]
+                    row[15] = f"{base} / {out['ineligible_reason']}" if base else out["ineligible_reason"]
         if i % 5 == 0:
             print(f"  진행: {i}/{len(triples)} (성공 {stats['ok']}, 미지원 {stats['unsupported']}, 실패 {stats['fail']})")
         enriched_rows.append(row)
@@ -361,6 +362,9 @@ def main():
     print(f"시트: https://docs.google.com/spreadsheets/d/{sheet_id}/edit")
     if stats["processed"]:
         print(f"\nLLM 분석: 성공 {stats['ok']} / 미지원(HWP) {stats['unsupported']} / 다운로드·파싱 실패 {stats['fail']} / 첨부없음 {stats['no_attach']}")
+        ineligible = stats.get("ineligible", 0)
+        eligible = stats["ok"] - ineligible
+        print(f"입찰 참여 판단: 가능 {eligible} / 불가 {ineligible}")
         print(f"토큰: in {stats['tok_in']:,} / out {stats['tok_out']:,}  → 예상비용 {estimate_cost(stats['tok_in'], stats['tok_out'])}")
 
     kw_count = Counter()
