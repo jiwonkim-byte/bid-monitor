@@ -69,20 +69,33 @@ def parse_open_date(s: str) -> dt.date | None:
     return None
 
 
-def fetch_bid_attachments(api_key: str, dates: list[dt.date]) -> dict:
-    """각 일자별로 BID API fetch → {(no, ord): (url, fname)} 사전 반환.
+def normalize_ord(ord_: str) -> str:
+    """차수 표기 정규화. '000' / '00' / '0' / '' → '000', '1' → '001' 등."""
+    s = (ord_ or "").strip()
+    if not s:
+        return ""
+    try:
+        return f"{int(s):03d}"
+    except ValueError:
+        return s
 
-    공개일이 fetch 일자 범위 밖에 있는 공고도 있을 수 있어서 ±1일 여유.
+
+def fetch_bid_attachments(api_key: str, dates: list[dt.date]) -> dict:
+    """각 일자별로 BID API fetch → {(no, ord_normalized): (url, fname)} 사전 반환.
+
+    공개일이 fetch 일자 범위 밖에 있는 공고도 있을 수 있어서 ±2일 여유.
+    여러 첨부 URL(ntceSpecDocUrl1~10) 중 첫 번째로 존재하는 것을 사용.
+    차수가 빈 공고는 (no, '') 키로도 추가 등록해 시트의 차수 누락 케이스 대응.
     """
     if not dates:
         return {}
-    min_d = min(dates) - dt.timedelta(days=1)
-    max_d = max(dates) + dt.timedelta(days=1)
+    min_d = min(dates) - dt.timedelta(days=2)
+    max_d = max(dates) + dt.timedelta(days=2)
     bgn = min_d.strftime("%Y%m%d") + "0000"
     end = max_d.strftime("%Y%m%d") + "2359"
     print(f"  BID API 재조회: {bgn} ~ {end}")
     mapping = {}
-    for page in range(1, 20):
+    for page in range(1, 30):
         params = {
             "serviceKey": api_key, "inqryDiv": "1",
             "inqryBgnDt": bgn, "inqryEndDt": end,
@@ -97,25 +110,38 @@ def fetch_bid_attachments(api_key: str, dates: list[dt.date]) -> dict:
         if not items:
             break
         for it in items:
-            no = it.get("bidNtceNo", "")
-            ord_ = it.get("bidNtceOrd", "")
-            url = it.get("ntceSpecDocUrl1", "")
-            fname = it.get("ntceSpecFileNm1", "")
-            if no and url:
-                mapping[(no, ord_)] = (url, fname)
+            no = (it.get("bidNtceNo") or "").strip()
+            if not no:
+                continue
+            ord_ = normalize_ord(it.get("bidNtceOrd"))
+            # url1~10 중 첫 번째로 존재하는 것
+            url = ""
+            fname = ""
+            for i in range(1, 11):
+                u = (it.get(f"ntceSpecDocUrl{i}") or "").strip()
+                if u:
+                    url = u
+                    fname = (it.get(f"ntceSpecFileNm{i}") or "").strip()
+                    break
+            entry = (url, fname)
+            mapping[(no, ord_)] = entry
+            # 시트 차수 누락 케이스 대응: (no, '') 키로도 등록 (이미 있으면 덮어쓰지 않음)
+            mapping.setdefault((no, ""), entry)
         total = body.get("totalCount", 0)
-        if len(mapping) >= total or page * 100 >= total:
+        if len(items) < 100 or (total and page * 100 >= total):
             break
-    print(f"  BID API: {len(mapping)}개 (공고번호, 차수) 인덱싱")
+    print(f"  BID API: {len(mapping)}개 키 인덱싱 (url 있는 행만 의미 있음)")
     return mapping
 
 
 def parse_ann_no(ann_no: str) -> tuple[str, str]:
-    """시트 C열 '공고번호' 포맷 'R26BK01539728 - 000' → ('R26BK01539728', '000')."""
+    """시트 C열 '공고번호' 포맷 'R26BK01539728 - 000' → ('R26BK01539728', '000').
+    차수는 정규화된 3자리 형태로 반환. 차수 없으면 빈 문자열.
+    """
     s = (ann_no or "").strip()
     if " - " in s:
         no, ord_ = s.split(" - ", 1)
-        return no.strip(), ord_.strip()
+        return no.strip(), normalize_ord(ord_)
     return s, ""
 
 
@@ -174,21 +200,25 @@ def main():
 
         if kind == "BID":
             no, ord_ = parse_ann_no(ann_no)
-            tup = bid_map.get((no, ord_))
+            tup = bid_map.get((no, ord_)) or bid_map.get((no, ""))
             if not tup:
-                print(f"  행{rn} [BID] {ann_no}: BID API 매핑 없음 — 스킵")
+                print(f"  행{rn} [BID] {ann_no} ({no!r},{ord_!r}): BID API 매핑 없음 — 스킵")
                 stats["no_url"] += 1
                 continue
             url, fname = tup
+            if not url:
+                print(f"  행{rn} [BID] {ann_no}: BID API에 첨부 URL 없음 — 스킵")
+                stats["no_url"] += 1
+                continue
             if not fname or "." not in fname:
-                fname = "doc.pdf"
+                fname = "doc.bin"  # 매직 시그니처로 추론
         elif kind == "PRE":
             url = v[12].strip().split("\n")[0]
             if not url:
                 print(f"  행{rn} [PRE] {ann_no}: 시트 M열 비어있음 — 스킵")
                 stats["no_url"] += 1
                 continue
-            fname = "spec.pdf"
+            fname = "spec.bin"  # 매직 시그니처로 추론
         else:
             stats["skipped"] += 1
             continue

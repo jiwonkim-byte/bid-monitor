@@ -96,24 +96,52 @@ def parse_hwpx(content: bytes) -> str:
     return "\n".join(parts)
 
 
+def sniff_format(content: bytes) -> str:
+    """다운로드된 바이트의 시그니처로 형식 추론.
+
+    Returns: 'pdf' / 'hwpx' / 'hwp' / 'unknown'
+    """
+    if len(content) < 8:
+        return "unknown"
+    # PDF: 보통 첫 1KB 안에 %PDF 시그니처 (BOM 등으로 인해 0번이 아닐 수 있음)
+    if b"%PDF" in content[:1024]:
+        return "pdf"
+    # HWPX = ZIP (HWP5+xml). PK\x03\x04
+    if content[:4] == b"PK\x03\x04":
+        # ZIP인데 HWPX인지 확인은 내용 보는 게 정확하지만, 첨부 컨텍스트에서는 hwpx로 시도
+        return "hwpx"
+    # HWP (OLE compound document)
+    if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "hwp"
+    return "unknown"
+
+
 def extract_text(url: str, filename: str) -> tuple[str, str]:
     """첨부 다운로드 후 텍스트 추출.
+
+    파일명 확장자보다 다운로드된 바이트의 매직 시그니처를 우선 사용한다.
+    (PRE의 경우 파일명을 알 수 없어 'spec.pdf'로 가정하는데 실제론 HWP일 수 있음)
 
     Returns:
         (text, status): status는 'ok' / 'unsupported' / 'fail' 중 하나.
     """
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ("pdf", "hwpx", "hwp"):
-        return "", "unsupported"
-
     content = download(url)
     if content is None:
         return "", "fail"
 
+    fmt = sniff_format(content)
+    if fmt == "unknown":
+        # 시그니처 추론 실패 — 확장자로 한번 더 시도
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in ("pdf", "hwpx", "hwp"):
+            fmt = ext
+        else:
+            return "", "unsupported"
+
     try:
-        if ext == "pdf":
+        if fmt == "pdf":
             text = parse_pdf(content)
-        elif ext == "hwpx":
+        elif fmt == "hwpx":
             text = parse_hwpx(content)
         else:  # hwp
             text = parse_hwp(content)
@@ -122,5 +150,5 @@ def extract_text(url: str, filename: str) -> tuple[str, str]:
             return "", "fail"
         return text, "ok"
     except Exception as e:
-        print(f"  ⚠️ 파싱 실패 ({filename}): {e}")
+        print(f"  ⚠️ 파싱 실패 ({filename}, sniffed={fmt}): {e}")
         return "", "fail"
