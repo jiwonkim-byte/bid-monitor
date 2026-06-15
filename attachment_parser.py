@@ -21,11 +21,13 @@ USER_AGENT = "Mozilla/5.0 (bid-monitor)"
 MAX_CHARS = 8000  # LLM 토큰 절약. 첨부 상단 N자만 사용 (사업 개요는 대부분 앞쪽에 위치)
 
 
-def download(url: str, timeout: int = 30) -> bytes | None:
+def download(url: str, connect_timeout: int = 5, read_timeout: int = 30) -> bytes | None:
+    # connect/read를 분리: g2b.go.kr가 응답을 안 할 때 빨리 포기해 워크플로 30분 한계 안에서 끝낸다.
+    # read는 살아있는 다운로드가 큰 hwp/pdf를 받을 시간을 보장.
     if not url:
         return None
     try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
+        r = requests.get(url, timeout=(connect_timeout, read_timeout), headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         if len(r.content) < 100:
             return None
