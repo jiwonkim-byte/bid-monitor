@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 
 import requests
@@ -137,8 +138,17 @@ def fetch_all(url: str, api_key: str, bgn: str, end: str, max_pages: int):
             "inqryBgnDt": bgn, "inqryEndDt": end,
             "pageNo": str(page), "numOfRows": "100", "type": "json",
         }
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
+        for attempt in range(3):
+            try:
+                r = requests.get(url, params=params, timeout=30)
+                r.raise_for_status()
+                break
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt == 2:
+                    raise
+                wait = 5 * (attempt + 1)
+                print(f"  page {page} 시도 {attempt+1} 실패 ({type(e).__name__}), {wait}s 후 재시도", file=sys.stderr)
+                time.sleep(wait)
         body = r.json().get("response", {}).get("body", {})
         page_items = body.get("items", [])
         if isinstance(page_items, dict):
